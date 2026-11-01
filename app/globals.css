@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #efede7;
+  --fg: #1c1f1e;
+  --muted: #5d6461;
+  --border: #dcd9d1;
+  --accent: #0f6b5c;
+  --accent-fg: #ffffff;
+  --accent-soft: #dcefe9;
+  --warn: #8a5a00;
+  --warn-soft: #fbefd4;
+  --warn-border: #e2b85c;
+  --danger: #a1262b;
+  --danger-soft: #fbe4e3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121514;
+    --surface: #1b1f1e;
+    --surface-2: #252a28;
+    --fg: #ecefed;
+    --muted: #a3aba7;
+    --border: #343a38;
+    --accent: #5cc9b2;
+    --accent-fg: #0b1a17;
+    --accent-soft: #17332d;
+    --warn: #f2c66d;
+    --warn-soft: #33290f;
+    --warn-border: #7a6123;
+    --danger: #f19a9c;
+    --danger-soft: #3a1c1d;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-border: var(--warn-border);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-sans-face), system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@utility btn {
+  @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-5 text-base font-semibold transition-colors disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-accent text-accent-fg hover:brightness-110;
+}
+@utility btn-secondary {
+  @apply btn border border-border bg-surface text-fg hover:bg-surface-2;
+}
+@utility card {
+  @apply rounded-2xl border border-border bg-surface p-4;
+}

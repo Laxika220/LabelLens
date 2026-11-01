@@ -55,3 +55,4 @@ __pycache__/
 # evaluation outputs and private photos
 eval/results/raw/
 eval/real/images/
+vision-service/eval/synthetic/

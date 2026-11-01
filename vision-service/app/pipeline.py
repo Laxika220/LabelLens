@@ -16,10 +16,13 @@ from difflib import SequenceMatcher
 
 from app import claude_reader, fusion, lexicon, ocr, preprocess, quality
 
-# CALIBRATED: variants fused with the original, and score cut-offs.
-FUSION_VARIANTS = ["illum", "adaptive"]
-LOW_SCORE = 0.5
-HIGH_SCORE = 0.95
+# CALIBRATED on the TRAIN half of the synthetic benchmark
+# (eval/results/synthetic_report.md, section 4): fewest silent errors with
+# at most 35% of words flagged and at most 50% of correct words flagged in
+# any condition the reader mostly gets right. Re-check on real photos.
+FUSION_VARIANTS = ["adaptive", "denoise_sharpen"]
+LOW_SCORE = 0.5  # below this the engine's own reading is "unreadable"
+HIGH_SCORE = 0.98  # words scored 0.95-0.98 were right only ~92% of the time
 
 STATUS_RANK = {fusion.UNREADABLE: 4, fusion.CONFLICTING: 3, fusion.MISSING: 2, fusion.PROBABLE: 1, fusion.CONFIRMED: 0}
 STATEMENT_START = re.compile(

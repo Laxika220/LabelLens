@@ -37,9 +37,14 @@ function params(extra: Record<string, string>) {
 
 async function get(path: string, p: URLSearchParams): Promise<Response> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${EUTILS}/${path}?${p}`, { signal: AbortSignal.timeout(15_000), cache: "no-store" });
-    if (res.ok) return res;
-    if (res.status !== 429 && res.status < 500) throw new Error(`PubMed ${path} ${res.status}`);
+    let res: Response | null = null;
+    try {
+      res = await fetch(`${EUTILS}/${path}?${p}`, { signal: AbortSignal.timeout(15_000), cache: "no-store" });
+    } catch {
+      // Network failure or timeout: retry like a 5xx.
+    }
+    if (res?.ok) return res;
+    if (res && res.status !== 429 && res.status < 500) throw new Error(`PubMed ${path} ${res.status}`);
     await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
   }
   throw new Error(`PubMed ${path} unavailable`);

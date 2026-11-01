@@ -23,7 +23,9 @@ from statistics import mean, median
 
 import cv2
 
-from app import fusion, lexicon, preprocess
+import numpy as np
+
+from app import fusion, lexicon, preprocess, quality
 from eval import metrics
 
 ROOT = Path(__file__).parent
@@ -107,6 +109,8 @@ def flag_stats(recs, truth_by_image, names, low, high, min_support, gate="indian
         "error_flag_recall": round(flagged_wrong / wrong, 4) if wrong else None,
         "flag_precision": round(flagged_wrong / flagged, 4) if flagged else None,
         "flag_rate": round(flagged / tot, 4) if tot else None,
+        # Correct words that were still flagged: the cost of being careful.
+        "false_flag_rate": round((flagged - flagged_wrong) / (tot - wrong), 4) if tot > wrong else None,
         "silent_errors": silent,
         "silent_error_rate": round(silent / tot, 5) if tot else None,
         "status_accuracy": {s: {"count": c, "correct_share": round(k / c, 4)} for s, (c, k) in sorted(by_status.items())},
@@ -169,7 +173,12 @@ def main():
         oracle[m["category"]].append(best)
         oracle["ALL"].append(best)
         orig = metrics.score(line_text(rec["variants"]["original"]["lines"]), m["text"], m["allergens"])
-        quality_rows.append({**rec["quality"], "category": m["category"], "cer": orig["cer"], "ing_recall": orig["ing_recall"]})
+        # Re-run the CURRENT quality check (cheap: detection only), so this
+        # section reflects the code users get, not the code at OCR-run time.
+        rep = quality.assess(cv2.imread(str(base / rec["image"])))
+        sharp = [reg.sharpness for reg in rep.regions]
+        quality_rows.append({"verdict": rep.verdict, "median_sharpness": float(np.median(sharp)) if sharp else None,
+                             "category": m["category"], "cer": orig["cer"], "ing_recall": orig["ing_recall"]})
         if rec["image"] in claude:
             cs = metrics.score(claude[rec["image"]]["text"].replace("⟦?⟧", ""), m["text"], m["allergens"])
             claude_scores[m["category"]].append(cs)
@@ -190,18 +199,42 @@ def main():
     test = [r for r in recs if manifest[r["image"]]["label_id"] not in train_ids]
     candidates = [v for v in ("clahe", "illum", "adaptive", "denoise_sharpen", "otsu", "upscale") if v in table]
     sets = [["original"]] + [["original", *c] for n in (1, 2, 3) for c in combinations(candidates, n)]
+    by_cat_train = defaultdict(list)
+    for r in train:
+        by_cat_train[manifest[r["image"]]["category"]].append(r)
     grid = []
     for names in sets:
         for low in (0.5, 0.7, 0.8):
             for high in (0.9, 0.95, 0.98):
                 st = flag_stats(train, truth, names, low, high, 1.0)
                 grid.append((names, low, high, st))
-    # Primary goal: fewest silent errors; then fewest flags (so the user isn't
-    # asked to check everything).
-    viable = [g for g in grid if g[3]["flag_rate"] is not None and g[3]["flag_rate"] <= 0.35]
-    chosen = min(viable or grid, key=lambda g: (g[3]["silent_errors"], g[3]["flag_rate"]))
+    # Primary goal: fewest silent errors (wrong words marked confirmed).
+    # Constraints so the user isn't asked to check everything: at most 35% of
+    # words flagged overall, and in every single condition at most 50% of the
+    # CORRECT words flagged (a variant that reads garbage under shadows would
+    # otherwise flood shadowed photos with junk alternatives; flags on words
+    # that really are wrong, as under motion blur, are not a cost).
+    viable = sorted(
+        (g for g in grid if g[3]["flag_rate"] is not None and g[3]["flag_rate"] <= 0.35),
+        key=lambda g: (g[3]["silent_errors"], g[3]["flag_rate"]),
+    )
+    chosen = None
+    for g in viable:
+        per_cond = [flag_stats(rs, truth, g[0], g[1], g[2], 1.0) for rs in by_cat_train.values()]
+        # Conditions where most words are misread (e.g. motion blur) need a
+        # retake; flagging everything there is correct, so they're exempt.
+        worst = max((st["false_flag_rate"] or 0) for st in per_cond if st["wrong_words"] < 0.25 * st["words"])
+        if worst <= 0.50:
+            chosen = g
+            break
+    constraint_met = chosen is not None
+    chosen = chosen or (viable or grid)[0]
     names, low, high, train_stats = chosen
     test_stats = flag_stats(test, truth, names, low, high, 1.0)
+    by_cat_test = defaultdict(list)
+    for r in test:
+        by_cat_test[manifest[r["image"]]["category"]].append(r)
+    test_by_condition = {c: flag_stats(rs, truth, names, low, high, 1.0) for c, rs in sorted(by_cat_test.items())}
     baseline_test = flag_stats(test, truth, ["original"], low, high, 1.0)
     no_gate_test = flag_stats(test, truth, names, low, high, 1.0, gate=None)
     base_gate_test = flag_stats(test, truth, names, low, high, 1.0, gate="base")
@@ -231,8 +264,10 @@ def main():
         "seconds_median": {v: median(seconds[v]) for v in seconds},
         "tesseract_seconds_median": median(r["seconds"] for r in tess.values()) if tess else None,
         "fusion": {
-            "chosen_on_train": {"variants": names, "low_score": low, "high_score": high, "train": train_stats},
+            "chosen_on_train": {"variants": names, "low_score": low, "high_score": high, "train": train_stats,
+                                "per_condition_constraint_met": constraint_met},
             "test": test_stats,
+            "test_by_condition": test_by_condition,
             "test_original_only_same_thresholds": baseline_test,
             "test_without_lexicon_gate": no_gate_test,
             "test_lexicon_without_indian_terms": base_gate_test,
@@ -311,6 +346,11 @@ def render(s, categories, variants) -> str:
         ("fused + full lexicon (production)", f["test"]),
     ):
         L.append(f"| {name} | {st['words']} | {st['wrong_words']} | {fmt(st['error_flag_recall'], True)} | {st['silent_errors']} ({fmt(st['silent_error_rate'], True)} of words) | {fmt(st['flag_rate'], True)} |")
+    L.append("\nBy condition (TEST, production settings):\n")
+    L.append("| condition | words | wrong | wrong flagged | silent errors | flagged for checking | correct words flagged |")
+    L.append("|---|---|---|---|---|---|---|")
+    for c, st in f["test_by_condition"].items():
+        L.append(f"| {c} | {st['words']} | {st['wrong_words']} | {fmt(st['error_flag_recall'], True)} | {st['silent_errors']} | {fmt(st['flag_rate'], True)} | {fmt(st['false_flag_rate'], True)} |")
     L.append("\nShare of words actually correct, per status (TEST, fused):\n")
     L.append("| status | words | actually correct |")
     L.append("|---|---|---|")

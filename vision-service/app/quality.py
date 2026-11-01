@@ -20,6 +20,12 @@ from app.imaging import to_gray
 MIN_LINE_HEIGHT = 16  # px. Below this, recognisers start losing characters.
 GOOD_LINE_HEIGHT = 28  # px. Upscaling beyond this rarely helps.
 BLUR_SHARPNESS = 0.35  # normalised sharpness below this = blurry region
+# Motion blur smears in ONE direction, so overall sharpness can stay high.
+# Ratio of weakest to strongest directional gradient energy: on the
+# synthetic set, motion-blurred lines scored 0.12-0.26, all other conditions
+# 0.42-0.94. Provisional: chosen after seeing the whole synthetic set and
+# only one blur strength; check on real photos.
+MOTION_ANISOTROPY = 0.33
 LOW_CONTRAST = 0.25  # (p95 - p5) / 255
 GLARE_PIXEL = 254  # luminance treated as clipped (white paper is usually below this)
 WASHED_CONTRAST = 0.15  # a line segment brighter than WASHED_MEAN with less contrast than this is washed out
@@ -38,6 +44,7 @@ class Region:
     height: float
     sharpness: float
     contrast: float
+    directional: float  # see directional_ratio; low = motion blur
     glare: float  # share of the line washed out by glare
     issues: list[str] = field(default_factory=list)
 
@@ -79,6 +86,17 @@ def sharpness(gray: np.ndarray) -> float:
     if var < 1e-3:
         return 0.0
     return float(cv2.Laplacian(g, cv2.CV_32F, ksize=3).var() / var)
+
+
+def directional_ratio(gray: np.ndarray) -> float:
+    """Weakest / strongest gradient energy over 12 directions (0-165 deg).
+    Sharp print has edges in every direction; movement erases edges along
+    the direction of motion."""
+    g = gray.astype(np.float32)
+    gx = cv2.Sobel(g, cv2.CV_32F, 1, 0)
+    gy = cv2.Sobel(g, cv2.CV_32F, 0, 1)
+    energy = [float(np.mean((gx * np.cos(t) + gy * np.sin(t)) ** 2)) for t in np.deg2rad(np.arange(0, 180, 15))]
+    return min(energy) / max(energy) if max(energy) > 1e-6 else 1.0
 
 
 def contrast(gray: np.ndarray) -> float:
@@ -185,6 +203,7 @@ def assess(img: np.ndarray, boxes: list[list[list[int]]] | None = None) -> Repor
             height=round(line.height, 1),
             sharpness=round(sharpness(crop), 3),
             contrast=round(contrast(crop), 3),
+            directional=round(directional_ratio(crop), 3),
             glare=0.0,
         )
         washed, cells = washed_segments(crop, line.height)
@@ -193,6 +212,8 @@ def assess(img: np.ndarray, boxes: list[list[list[int]]] | None = None) -> Repor
             r.issues.append("small")
         if r.sharpness < BLUR_SHARPNESS:
             r.issues.append("blurry")
+        if r.directional < MOTION_ANISOTROPY:
+            r.issues.append("motion_blur")
         if r.contrast < LOW_CONTRAST:
             r.issues.append("low_contrast")
         if washed >= 2 and r.glare > GLARE_REGION_FRACTION:
@@ -215,7 +236,7 @@ def assess(img: np.ndarray, boxes: list[list[list[int]]] | None = None) -> Repor
     edges = _cut_off(boxes, w, h)
     block = round(blockiness(gray), 2)
 
-    blocking = {"blurry", "glare", "small"}
+    blocking = {"blurry", "motion_blur", "glare", "small"}
     usable = [r for r in regions if not blocking & set(r.issues)]
     usable_fraction = round(len(usable) / len(regions), 2) if regions else 0.0
 
@@ -256,6 +277,10 @@ def _advice(regions, median_h, skew, p95, blobs, edges, block) -> list[str]:
     n = len(regions)
     share = lambda issue: sum(issue in r.issues for r in regions) / n  # noqa: E731
 
+    if share("motion_blur") > 0.3:
+        tips.append("The photo is smeared by movement. Hold the phone still (rest your elbows) and take it again.")
+    elif share("motion_blur") > 0:
+        tips.append("Part of the photo is smeared by movement. Hold the phone still and retake that part.")
     if share("blurry") > 0.5:
         tips.append("Most of the text is out of focus. Hold the phone steady and tap the text to focus.")
     elif share("blurry") > 0.1:

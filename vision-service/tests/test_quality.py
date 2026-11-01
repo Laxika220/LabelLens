@@ -130,3 +130,13 @@ def test_variant_boxes_map_back_to_original(clean):
     o = np.array(orig_lines[0].box).mean(axis=0)
     mapped = np.array([np.array(v.to_original(ln.box)).mean(axis=0) for ln in var_lines])
     assert np.min(np.linalg.norm(mapped - o, axis=1)) < 15
+
+
+def test_motion_blur_is_detected(clean):
+    """Motion blur keeps overall sharpness high, so it needs its own check."""
+    boxes = [reg.box for reg in quality.assess(clean).regions]
+    r = quality.assess(synth.motion_blur(clean, 11, 10), boxes)
+    assert all("motion_blur" in reg.issues for reg in r.regions)
+    assert r.verdict == "retake"
+    assert any("movement" in tip for tip in r.advice)
+    assert all("motion_blur" not in reg.issues for reg in quality.assess(clean).regions)

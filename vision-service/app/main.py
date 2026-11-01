@@ -10,10 +10,10 @@ import os
 import time
 from collections import defaultdict
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from app import quality
+from app import pipeline, quality
 from app.imaging import MAX_BYTES, ImageError, decode
 
 app = FastAPI(title="LabelLens vision service", docs_url=None, redoc_url=None)
@@ -55,3 +55,13 @@ async def assess(image: UploadFile = File(...)):
     img = await read_image(image)
     report = await run_in_threadpool(quality.assess, img)
     return report.to_dict()
+
+
+@app.post("/read", dependencies=[Depends(guard)])
+async def read(images: list[UploadFile] = File(...), use_claude: bool = Form(True)):
+    """Read 1-4 photos of one label. Returns items with statuses, the words
+    and boxes they came from, per-photo quality, and warnings."""
+    if not 1 <= len(images) <= 4:
+        raise HTTPException(422, "Send 1 to 4 photos of the same label.")
+    decoded = [await read_image(im) for im in images]
+    return await run_in_threadpool(pipeline.read_label, decoded, use_claude)

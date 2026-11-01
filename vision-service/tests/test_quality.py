@@ -106,3 +106,27 @@ def test_perspective_panel_is_found():
     assert corners is not None
     warped = preprocess.warp_panel(img, corners)
     assert warped.shape[0] > 50 and warped.shape[1] > 50
+
+
+def test_read_after_detect_still_recognises(clean):
+    """Regression: RapidOCR keeps flags between calls on the shared engine."""
+    from app import ocr
+
+    ocr.detect(clean)
+    lines = ocr.read(clean)
+    assert lines and "sugar" in " ".join(line.text for line in lines).lower()
+
+
+def test_variant_boxes_map_back_to_original(clean):
+    """Text found in a deskewed + upscaled variant lands on the same spot of the original."""
+    from app import ocr
+
+    small_tilted = synth.rotate(cv2.resize(clean, None, fx=0.5, fy=0.5), 6)
+    rep = quality.assess(small_tilted)
+    vs = {v.name: v for v in preprocess.variants(small_tilted, rep.median_line_height, rep.skew_deg)}
+    v = vs.get("upscale") or vs["geometry"]
+    orig_lines = ocr.read(small_tilted)
+    var_lines = ocr.read(v.image)
+    o = np.array(orig_lines[0].box).mean(axis=0)
+    mapped = np.array([np.array(v.to_original(ln.box)).mean(axis=0) for ln in var_lines])
+    assert np.min(np.linalg.norm(mapped - o, axis=1)) < 15

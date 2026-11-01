@@ -5,3 +5,4 @@ numpy==2.5.4
 opencv-python-headless==5.0.0.93
 onnxruntime==1.31.1
 rapidocr==3.10.0
+anthropic==2.3.0

@@ -59,7 +59,9 @@ def detect(img: np.ndarray) -> list[list[list[int]]]:
 
 def read(img: np.ndarray) -> list[Line]:
     """Detect, orientation-classify and recognise text lines."""
-    out = engine()(to_bgr(img))
+    # Flags must be explicit: RapidOCR keeps the last call's flags on the
+    # shared engine, so after detect() a bare call would skip recognition.
+    out = engine()(to_bgr(img), use_det=True, use_cls=True, use_rec=True)
     if out.boxes is None or out.txts is None:
         return []
     return [

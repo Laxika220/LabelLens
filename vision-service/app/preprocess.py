@@ -9,7 +9,7 @@ characters: upscaling interpolates existing pixels, it does not "imagine"
 detail the way generative super-resolution does.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import cv2
@@ -27,11 +27,19 @@ class Variant:
     name: str
     image: np.ndarray
     note: str
+    # 3x3 matrix mapping original-photo pixels to this variant's pixels, so
+    # text found in any variant can be located on the original photo.
+    matrix: np.ndarray = field(default_factory=lambda: np.eye(3))
+
+    def to_original(self, box: list[list[int]]) -> list[list[int]]:
+        pts = np.array(box, np.float32).reshape(-1, 1, 2)
+        inv = np.linalg.inv(self.matrix)
+        return cv2.perspectiveTransform(pts, inv).reshape(-1, 2).round().astype(int).tolist()
 
 
 # ---------- geometry ----------
 
-def rotate(img: np.ndarray, angle_deg: float) -> np.ndarray:
+def rotate_with_matrix(img: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndarray]:
     """Rotate around the centre, enlarging the canvas so no corner is cut."""
     h, w = img.shape[:2]
     m = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
@@ -39,7 +47,12 @@ def rotate(img: np.ndarray, angle_deg: float) -> np.ndarray:
     nw, nh = int(h * sin + w * cos), int(h * cos + w * sin)
     m[0, 2] += nw / 2 - w / 2
     m[1, 2] += nh / 2 - h / 2
-    return cv2.warpAffine(img, m, (nw, nh), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    out = cv2.warpAffine(img, m, (nw, nh), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return out, np.vstack([m, [0, 0, 1]])
+
+
+def rotate(img: np.ndarray, angle_deg: float) -> np.ndarray:
+    return rotate_with_matrix(img, angle_deg)[0]
 
 
 def deskew(img: np.ndarray, skew_deg: float | None) -> np.ndarray | None:
@@ -75,12 +88,17 @@ def find_panel(img: np.ndarray, min_area: float = 0.2) -> np.ndarray | None:
     return None
 
 
-def warp_panel(img: np.ndarray, corners: np.ndarray) -> np.ndarray:
+def warp_panel_with_matrix(img: np.ndarray, corners: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     tl, tr, br, bl = corners
     w = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
     h = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
     dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], np.float32)
-    return cv2.warpPerspective(img, cv2.getPerspectiveTransform(corners, dst), (w, h), flags=cv2.INTER_CUBIC)
+    m = cv2.getPerspectiveTransform(corners, dst)
+    return cv2.warpPerspective(img, m, (w, h), flags=cv2.INTER_CUBIC), m
+
+
+def warp_panel(img: np.ndarray, corners: np.ndarray) -> np.ndarray:
+    return warp_panel_with_matrix(img, corners)[0]
 
 
 # ---------- photometric ----------
@@ -118,17 +136,19 @@ def denoise_sharpen(img: np.ndarray) -> np.ndarray:
     return cv2.addWeighted(gray, 1.6, blur, -0.6, 0)
 
 
+def upscale_factor(img: np.ndarray, line_height: float | None) -> float | None:
+    if not line_height or line_height >= TARGET_LINE_HEIGHT * 0.8:
+        return None
+    h, w = img.shape[:2]
+    f = min(MAX_UPSCALE, TARGET_LINE_HEIGHT / line_height, MAX_SIDE / max(h, w))
+    return f if f >= 1.2 else None
+
+
 def upscale(img: np.ndarray, line_height: float | None) -> np.ndarray | None:
     """Enlarge small text towards TARGET_LINE_HEIGHT with bicubic
     interpolation. Returns None when the text is already big enough."""
-    if not line_height or line_height >= TARGET_LINE_HEIGHT * 0.8:
-        return None
-    f = min(MAX_UPSCALE, TARGET_LINE_HEIGHT / line_height)
-    h, w = img.shape[:2]
-    f = min(f, MAX_SIDE / max(h, w))
-    if f < 1.2:
-        return None
-    return cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    f = upscale_factor(img, line_height)
+    return None if f is None else cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
 
 
 PHOTOMETRIC: dict[str, tuple[Callable[..., np.ndarray], str]] = {
@@ -140,16 +160,18 @@ PHOTOMETRIC: dict[str, tuple[Callable[..., np.ndarray], str]] = {
 }
 
 
-def geometric_base(img: np.ndarray, skew_deg: float | None) -> tuple[np.ndarray, list[str]]:
+def geometric_base(img: np.ndarray, skew_deg: float | None) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Apply the geometry fixes that are clearly safe: perspective warp when a
-    panel is found, otherwise deskew. Returns the image and what was done."""
+    panel is found, otherwise deskew. Returns the image, its matrix from
+    original coordinates, and what was done."""
     corners = find_panel(img)
     if corners is not None:
-        return warp_panel(img, corners), ["perspective"]
-    rotated = deskew(img, skew_deg)
-    if rotated is not None:
-        return rotated, [f"deskew {skew_deg:.1f}°"]
-    return img, []
+        out, m = warp_panel_with_matrix(img, corners)
+        return out, m, ["perspective"]
+    if skew_deg is not None and 1.0 <= abs(skew_deg) <= 45:
+        out, m = rotate_with_matrix(img, skew_deg)
+        return out, m, [f"deskew {skew_deg:.1f}°"]
+    return img, np.eye(3), []
 
 
 def variants(
@@ -160,17 +182,19 @@ def variants(
 ) -> list[Variant]:
     """Build the requested variants (all by default). 'original' is always first."""
     out = [Variant("original", img, "unchanged photo")]
-    base, geo = geometric_base(img, skew_deg)
+    base, base_m, geo = geometric_base(img, skew_deg)
     if geo:
-        out.append(Variant("geometry", base, ", ".join(geo)))
-    up = upscale(base, line_height)
-    if up is not None:
-        out.append(Variant("upscale", up, f"bicubic upscale to ~{TARGET_LINE_HEIGHT}px lines"))
-    src = up if up is not None else base
-    src_line_height = TARGET_LINE_HEIGHT if up is not None else line_height
+        out.append(Variant("geometry", base, ", ".join(geo), base_m))
+    src, src_m, src_line_height = base, base_m, line_height
+    f = upscale_factor(base, line_height)
+    if f is not None:
+        src = cv2.resize(base, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        src_m = np.diag([f, f, 1.0]) @ base_m
+        src_line_height = TARGET_LINE_HEIGHT
+        out.append(Variant("upscale", src, f"bicubic upscale to ~{TARGET_LINE_HEIGHT}px lines", src_m))
     for name, (fn, note) in PHOTOMETRIC.items():
         if names is None or name in names:
-            out.append(Variant(name, to_bgr(fn(src, src_line_height)), note))
+            out.append(Variant(name, to_bgr(fn(src, src_line_height)), note, src_m))
     if names is not None:
         out = [v for v in out if v.name in names or v.name == "original"]
     return out

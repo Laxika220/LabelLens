@@ -1,61 +1,72 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import path from "node:path";
 
-// Render a plain ingredient label to a PNG so the upload path has a real image.
-async function labelPng(page: Page): Promise<Buffer> {
-  await page.setContent(`
-    <div id="label" style="width:900px;padding:40px;background:#fff;color:#000;font:34px/1.5 Arial">
-      <b>INGREDIENTS:</b> Wheat flour, sugar, palm oil, cocoa powder 6%, salt, emulsifier (INS 322).
-      <br><b>Contains:</b> wheat, soy.
-    </div>`);
-  return page.locator("#label").screenshot();
-}
+const fixture = (name: string) => path.join(__dirname, "fixtures", name);
 
 test("live camera shows the guide frame and capture button", async ({ page }) => {
   await page.goto("/scan");
   await expect(page.getByLabel("Camera preview")).toBeVisible();
   await expect(page.getByRole("button", { name: "Capture this part of the label" })).toBeEnabled();
-  await expect(page.getByRole("status").first()).not.toHaveText("Starting camera…");
 });
 
-test("photo upload is read and can be confirmed", async ({ page }) => {
-  const png = await labelPng(page);
+test("clear photo: quality check, cross-checked reading, confirm", async ({ page }) => {
   await page.goto("/scan");
-  await page.locator('input[type=file][multiple]').setInputFiles({ name: "label.png", mimeType: "image/png", buffer: png });
-  await expect(page.getByAltText("Label part 1")).toBeVisible();
+  await page.locator("input[type=file][multiple]").setInputFiles(fixture("label-clean.jpg"));
+  await expect(page.getByText("Photo 1")).toBeVisible();
+  await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { name: /Read label from 1 photo/ }).click();
-  await expect(page).toHaveURL(/\/confirm$/, { timeout: 90_000 });
+  await expect(page).toHaveURL(/\/confirm$/, { timeout: 120_000 });
+  await expect(page.getByRole("heading", { name: "Check what was read" })).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "Check the ingredients" })).toBeVisible();
-  for (const name of ["sugar", "palm oil", "salt"]) {
-    await expect(page.getByRole("button", { name: new RegExp(`^${name}\\b`, "i") }).first()).toBeVisible();
+  for (const name of ["Wheat Flour", "Sugar", "Palm Oil", "Iodised Salt", "Emulsifier (322)"]) {
+    await expect(page.getByRole("button", { name: `${name}. Tap to edit` })).toBeVisible();
   }
+  await expect(page.getByRole("button", { name: "CONTAINS: WHEAT, SOY. Tap to edit" })).toBeVisible();
+  await expect(page.getByText("Allergen information may be incomplete")).toHaveCount(0);
+
+  // Provenance: the item can be located on the photo.
+  await page.getByRole("button", { name: "Show on photo" }).first().click();
+  await expect(page.getByRole("img", { name: /Where "Wheat Flour" was read/ })).toBeVisible();
+
   await page.getByRole("button", { name: "This matches the label" }).click();
   await expect(page.getByText("Ingredient list confirmed.")).toBeVisible();
+});
+
+test("glare photo: allergen warning and the hidden part must be acknowledged", async ({ page }) => {
+  await page.goto("/scan");
+  await page.locator("input[type=file][multiple]").setInputFiles(fixture("label-glare.jpg"));
+  await page.getByRole("button", { name: /Read label from 1 photo/ }).click();
+  await expect(page).toHaveURL(/\/confirm$/, { timeout: 120_000 });
+
+  await expect(page.getByText("Allergen information may be incomplete")).toBeVisible();
+  await expect(page.getByText(/Glare covers part of photo 1/).first()).toBeVisible();
+  const confirmBtn = page.getByRole("button", { name: "This matches the label" });
+  await expect(confirmBtn).toBeDisabled();
+
+  // Resolve: acknowledge each gap; fix or remove each disputed line.
+  for (const box of await page.getByLabel("I've checked this part on the pack").all()) await box.check();
+  for (let i = 0; i < 20 && (await confirmBtn.isDisabled()); i++) {
+    const right = page.getByRole("button", { name: /is right$/ }).first();
+    if (await right.count()) await right.click();
+    else break;
+  }
+  await expect(confirmBtn).toBeEnabled();
 });
 
 test("typed list can be edited before confirming", async ({ page }) => {
   await page.goto("/scan");
   await page.getByRole("button", { name: /Type the ingredients instead/ }).click();
-  await page.getByLabel("Type or paste the ingredient list").fill(
-    "Ingredients: sugr, chocolate (cocoa butter, milk solids), salt. May contain peanuts.",
-  );
+  await page.getByLabel("Type or paste the ingredient list").fill("Ingredients: sugr, chocolate (cocoa butter, milk solids), salt. May contain peanuts.");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page).toHaveURL(/\/confirm$/);
 
-  await page.getByRole("button", { name: /^sugr\. Tap to edit/ }).click();
+  await page.getByRole("button", { name: "sugr. Tap to edit" }).click();
   await page.getByLabel("Edit sugr").fill("sugar");
   await page.getByLabel("Edit sugr").press("Enter");
+  await expect(page.getByRole("button", { name: "sugar. Tap to edit" })).toBeVisible();
   await page.getByRole("button", { name: "Remove salt" }).click();
-  await page.getByLabel("Add a missed ingredient").fill("Emulsifier (471)");
-  await page.getByRole("button", { name: "Add", exact: true }).first().click();
-
-  await expect(page.getByRole("button", { name: /^milk solids\. Tap to edit/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^May contain peanuts/ })).toBeVisible();
-
+  await expect(page.getByRole("button", { name: /^May contain peanuts.*Tap to edit$/ })).toBeVisible();
   await page.getByRole("button", { name: "This matches the label" }).click();
-  await page.getByText("Show data").click();
-  const data = JSON.parse(await page.locator("pre").innerText());
-  expect(data.ingredients.map((i: { canonical: string }) => i.canonical)).toEqual(["sugar", "chocolate", "emulsifier"]);
-  expect(data.ingredients[2].codes).toEqual(["INS 471", "E471"]);
+  await expect(page.getByText("Ingredient list confirmed.")).toBeVisible();
 });

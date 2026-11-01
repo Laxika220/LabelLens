@@ -2,9 +2,16 @@
 
 // Client-side image pipeline. Re-encoding through a canvas drops all EXIF/GPS
 // metadata, so nothing location-related ever leaves the device.
+//
+// Deliberately minimal: crop, resize, re-encode. Contrast/sharpening used to
+// be applied here to every photo, but measurement (vision-service/eval)
+// showed the unprocessed photo reads best in most conditions, so all
+// enhancement now happens server-side where it is measured.
 
-export const MAX_EDGE = 1600;
-export const JPEG_QUALITY = 0.85;
+export const MAX_EDGE = 2000;
+export const JPEG_QUALITY = 0.9;
+// Extra margin kept around the guide frame so text just outside it isn't lost.
+export const FRAME_MARGIN = 0.06;
 
 // Tuned on a 240px-wide luminance sample; adjust with real-device testing.
 export const BLUR_THRESHOLD = 45;
@@ -42,7 +49,10 @@ function coverToSource(video: HTMLVideoElement, r: FrameRect) {
 }
 
 export function grabFrame(video: HTMLVideoElement, frame: FrameRect = GUIDE_FRAME): HTMLCanvasElement {
-  const { sx, sy, sw, sh } = coverToSource(video, frame);
+  const x = Math.max(0, frame.x - FRAME_MARGIN);
+  const y = Math.max(0, frame.y - FRAME_MARGIN);
+  const padded = { x, y, w: Math.min(1 - x, frame.w + 2 * FRAME_MARGIN), h: Math.min(1 - y, frame.h + 2 * FRAME_MARGIN) };
+  const { sx, sy, sw, sh } = coverToSource(video, padded);
   const c = canvas(sw, sh);
   c.getContext("2d")!.drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
   return c;
@@ -113,52 +123,15 @@ export function measureVideoQuality(video: HTMLVideoElement, frame: FrameRect = 
   });
 }
 
-// Percentile contrast stretch + light unsharp mask, applied in place.
-function enhance(ctx: CanvasRenderingContext2D, w: number, h: number) {
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
-  const n = w * h;
-  const y = luminance(d, n);
-
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < n; i++) hist[y[i] | 0]++;
-  let lo = 0;
-  let hi = 255;
-  for (let acc = 0; lo < 255 && (acc += hist[lo]) < n * 0.01; lo++);
-  for (let acc = 0; hi > 0 && (acc += hist[hi]) < n * 0.01; hi--);
-  const range = hi - lo;
-  const gain = range > 40 ? 255 / range : 1;
-  const shift = range > 40 ? lo : 0;
-
-  const src = new Uint8ClampedArray(d);
-  const amount = 0.5;
-  for (let j = 0; j < h; j++) {
-    for (let i = 0; i < w; i++) {
-      const k = (j * w + i) * 4;
-      for (let ch = 0; ch < 3; ch++) {
-        let v = (src[k + ch] - shift) * gain;
-        if (i > 0 && j > 0 && i < w - 1 && j < h - 1) {
-          const blur =
-            (src[k + ch - 4] + src[k + ch + 4] + src[k + ch - w * 4] + src[k + ch + w * 4]) / 4;
-          v += amount * ((src[k + ch] - blur) * gain);
-        }
-        d[k + ch] = v;
-      }
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-}
-
 export type ProcessedPhoto = { blob: Blob; width: number; height: number; quality: Quality };
 
 export async function processCanvas(src: HTMLCanvasElement): Promise<ProcessedPhoto> {
   const scale = Math.min(1, MAX_EDGE / Math.max(src.width, src.height));
   const out = canvas(src.width * scale, src.height * scale);
-  const ctx = out.getContext("2d", { willReadFrequently: true })!;
+  const ctx = out.getContext("2d")!;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(src, 0, 0, out.width, out.height);
   const quality = measureQuality(out, out.width, out.height);
-  enhance(ctx, out.width, out.height);
   const blob = await new Promise<Blob>((resolve, reject) =>
     out.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", JPEG_QUALITY),
   );

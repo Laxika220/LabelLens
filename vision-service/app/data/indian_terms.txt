@@ -1,0 +1,16 @@
+# Common Indian food-label terms (Hindi/regional names written in English
+# letters, and Indian-English spellings). Curated from general knowledge of
+# FSSAI-style labels. Kept separate so the evaluation can be run with and
+# without it.
+aam aamchur ajwain ajowan amchur anardana arhar atta badam bajra besan bhuna
+chaas chana chhena chironji dahi dalchini dal dhania ghee gingelly gram groundnut
+gud gur gulkand haldi hing imli jaggery jeera jowar kachri kaju kalonji kasuri
+kesar kewra khoa khoya kishmish kokum kuttu lassi laung makhana malai masoor
+maida mawa methi mishri moong nachni namkeen paneer pista poha rajgira rajma rai
+ragi rava sabudana saunf sendha singhara sooji suji til toor urad vanaspati
+elaichi jaiphal javitri kali mirch lal saunth sonth tejpatta ilaichi
+iodised iodized stabiliser stabilisers stabilizer stabilizers emulsifier emulsifiers
+flavour flavours flavouring flavourings colour colours colouring humectant humectants
+acidity regulator regulators antioxidant antioxidants preservative preservatives
+thickener thickeners anticaking glazing improver tastemaker seasoning palmolein
+soyabean soya permitted synthetic nature identical lactating phenylketonurics

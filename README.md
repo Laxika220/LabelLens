@@ -1,82 +1,103 @@
-# LabelLens (web)
+# LabelLens
 
-Mobile-first PWA that reads food ingredient labels and (in later milestones) gives personalised, research-backed insights. Educational tool, not a medical device.
+A mobile-first web app (PWA) that reads the ingredient label on packaged food, shows **how sure it is about every word**, and checks the confirmed list against your allergies and diet. It's an educational tool, not a medical device.
 
-**Status: milestone 1 of 5: capture, extraction and confirmation.**
+The priority is accuracy and honesty: the app should read whatever a photo genuinely allows, say plainly what it couldn't read, and never fill gaps with guesses.
 
-## Run it
+## Architecture
 
-```bash
-npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY
-npm run dev                  # http://localhost:3000
+```
+Phone (Next.js PWA)                              Next.js server (Vercel)              Vision service (Python, container)
+┌───────────────────────────────┐   photos    ┌──────────────────────────┐  token   ┌──────────────────────────────────────┐
+│ camera / gallery, up to 4     │────────────▶│ /api/assess  /api/read   │─────────▶│ quality check per text line          │
+│ crop + resize + JPEG          │             │ rate limit, validation   │          │ preprocessing variants (OpenCV)      │
+│ (EXIF/GPS removed)            │◀────────────│ response schema check    │◀─────────│ RapidOCR on each variant             │
+│                               │  statuses   └──────────────────────────┘          │ word-level fusion + lexicon check    │
+│ review screen: confirmed /    │                                                   │ Claude vision as independent check   │
+│ check / differ / unreadable / │                                                   │ photo merging, missing-text detection│
+│ missing, show-on-photo        │                                                   └──────────────────────────────────────┘
+│                               │
+│ allergen + diet checks        │  ← run on the phone; the health profile never leaves the device
+│ profiles in IndexedDB         │
+└───────────────────────────────┘
+Fallbacks: vision service down → Claude alone (everything marked "Check"); offline → Tesseract on the phone.
 ```
 
-The live camera needs HTTPS (or `localhost`). To test on a phone on the same Wi-Fi, run `npx next dev --experimental-https` and open `https://<your-computer-ip>:3000`. Without HTTPS the app still offers "Take photo" / "From gallery", which open the phone's camera app.
+Why two services: OpenCV and the PaddleOCR models (via RapidOCR/ONNX) are mature, light and fast in Python, but too heavy to run in the browser or in a Vercel function. The Next.js app stays on Vercel; the vision service needs a small container (about 1 GB of RAM).
 
-| Script | What it does |
+## How a label is read
+
+1. **Quality check** of each photo, per text line: size, sharpness, contrast, glare, text cut off at an edge, skew, JPEG damage. Gives specific advice ("move closer", "tilt to remove glare", "capture the bottom section"). One blurry region doesn't reject the readable ones.
+2. **Several readings**: OCR on the original photo and on selected processed versions. Which versions to use was chosen by measurement (see *Accuracy*), not by default.
+3. **Word-by-word comparison**: every word records which readings agree and what the alternatives were.
+4. **Status per word and per ingredient**:
+   - *Confirmed*: all readings agree, high score, and the word is a known food word, English word, number or additive code.
+   - *Check (probable)*: e.g. only one reader, or an unknown word. Look-alike fixes ("lodised" → "iodised") are offered, never applied.
+   - *Readings differ (conflicting)*: the user picks.
+   - *Unreadable*: the engine, or the AI check, couldn't read it.
+   - *Missing*: text runs off the photo edge, the list has no start or end, or glare hides part of it.
+5. **Claude vision (optional)** transcribes the photo independently, marking anything illegible instead of guessing. It can turn words into conflicts but never overrides the OCR on its own.
+6. **Review**: the user confirms or fixes every line. Gaps must be acknowledged or retaken before continuing. If anything was unreadable, a prominent banner says allergens may be missed.
+
+## Allergen and diet checks
+
+These are deterministic (no AI) and run in the browser on the confirmed text (`lib/safety/`):
+
+- FSSAI allergen groups plus the rest of the EU 14, with Indian names (maida, suji, besan, khoa, paneer, til, rai...).
+- Levels: *contains*, *may contain* (precautionary statements), *source not stated* (lecithin, maltodextrin, unspecified vegetable oil, compounded hing), and *can't rule out* (when part of the label was unreadable). There is no "safe" level.
+- Peanut and tree nut are separate. Look-alikes are excluded (coconut milk, cocoa butter, buckwheat, nutmeg).
+- Diets: vegetarian (Indian sense, so no egg), vegan, Jain, halal, kosher.
+
+## Information sources (in progress)
+
+- `lib/kb/additives.json`: 729 INS/E codes from the Open Food Facts taxonomy (ODbL). Its 203 EFSA opinion links were each **verified against Crossref** (the DOI exists and its title matches).
+- `lib/kb/regulatory-updates.json`: newer decisions (e.g. EFSA 2021 on titanium dioxide, WHO 2023 on aspartame), each **confirmed against the authority's own page** by `scripts/verify-regulatory.mjs`.
+- `lib/evidence/pubmed.ts`: PubMed retrieval that prefers meta-analyses, systematic reviews and RCTs, and labels each study as human, animal or in vitro.
+- Not yet built: AI-written summaries grounded only in retrieved sources, FSSAI status per additive, and the evidence UI.
+
+## Accuracy
+
+See `vision-service/eval/`. The synthetic benchmark (360 rendered labels, 15 degradation types) is used to *compare techniques*. **No real-world accuracy figure exists yet**: that needs real phone photos with hand-checked transcriptions (`vision-service/eval/real/README.md`).
+
+## Run locally
+
+```bash
+# 1. Vision service (Python 3.13)
+cd vision-service
+python3.13 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+VISION_SERVICE_TOKEN=dev-token .venv/bin/uvicorn app.main:app --port 8001
+
+# 2. Web app (another terminal)
+cd ..
+npm install
+cp .env.example .env.local   # set VISION_SERVICE_URL=http://127.0.0.1:8001 and VISION_SERVICE_TOKEN=dev-token
+npm run dev
+```
+
+The live camera needs HTTPS on a phone: `npx next dev --experimental-https`, then open `https://<computer-ip>:3000`.
+
+| Command | What it runs |
 | --- | --- |
-| `npm test` | Unit tests (Vitest) |
-| `npm run e2e` | Playwright flow at 360px width with a fake camera; builds and starts the app on port 3100 |
-| `npm run typecheck` / `npm run lint` | TypeScript and ESLint |
+| `npm test` | Web unit tests (parser, allergen matcher, diets, PubMed parsing) |
+| `LIVE=1 npm test` | Tests that call real external APIs (PubMed) |
+| `npm run e2e` | Playwright at 360 px: starts both services, uploads real images through the full pipeline |
+| `cd vision-service && .venv/bin/python -m pytest` | Vision service tests |
+| `.venv/bin/python -m eval.synth && .venv/bin/python -m eval.run_ocr && .venv/bin/python -m eval.analyse` | Rebuild and score the synthetic benchmark (about 75 minutes on an M1) |
 
 ## Environment variables
 
-| Name | Needed | Purpose |
+| Name | Where | Purpose |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | For AI reading | Claude vision extraction. If unset, `/api/extract` returns 503 and the app reads the label on the device with Tesseract. |
-| `CLAUDE_MODEL` | No | Defaults to `claude-sonnet-5-5`. |
-| `NCBI_API_KEY`, `DATABASE_URL`, Upstash, `FDC_API_KEY` | Milestone 3+ | Evidence retrieval and the knowledge base. |
+| `VISION_SERVICE_URL`, `VISION_SERVICE_TOKEN` | web | Reach the vision service; the token never reaches the browser |
+| `VISION_SERVICE_TOKEN` | vision service | Must match the web app's token |
+| `ANTHROPIC_API_KEY` | vision service (and web, for the fallback) | Claude vision cross-check. Optional: without it, OCR readings are cross-checked only against each other |
+| `CLAUDE_MODEL` | both | Default `claude-sonnet-5-5` |
+| `NCBI_API_KEY` | web | Optional: raises the PubMed rate limit |
 
-## How milestone 1 works
+## Privacy
 
-```
- phone                                             server (Next.js route handler)
- ┌──────────────────────────────────────────┐
- │ /scan  CameraCapture                     │
- │  getUserMedia(rear) + guide frame        │
- │  live blur (Laplacian var) / glare check │
- │  crop to frame → ≤1600px → contrast +    │
- │  sharpen → JPEG 0.85 (EXIF/GPS dropped)  │
- │  up to 4 photos per label                │
- └──────────────┬───────────────────────────┘
-                │ online                      ┌───────────────────────────────┐
-                ├────────────────────────────▶│ POST /api/extract             │
-                │                             │  rate limit, zod-validate     │
-                │                             │  Claude vision, structured    │
-                │                             │  output (ExtractionSchema)    │
-                │◀────────────────────────────│  image never stored or logged │
-                │ offline / 503 / network err └───────────────────────────────┘
-                ├──▶ Tesseract.js on device → parseLabelText()
-                ▼
- IndexedDB draft (photos + extraction, local only)
-                ▼
- /confirm  editable chips, low-confidence (<0.75) highlighted, nested
-           sub-ingredients, allergen statements, product name, photo zoom
-```
+Photos are cropped and re-encoded on the phone (removing EXIF/GPS), processed in memory by the server and not stored or logged. Profiles and scans live only in the browser (IndexedDB), with a "Delete all my data" button on the profile page. API keys stay on the servers.
 
-Key files:
+## Licences of data
 
-- `lib/ai/prompts/extract.v1.ts`: versioned extraction prompt
-- `lib/ai/schemas.ts`: Zod schema for extraction output plus clamping/normalisation
-- `app/api/extract/route.ts`: Claude call (`messages.parse` + `zodOutputFormat`, effort `low` for speed)
-- `lib/image/preprocess.ts`: crop, resize, enhance, quality metrics, EXIF stripping
-- `lib/normalise/parse-label-text.ts`: text-to-ingredients parser (nested brackets, E/INS codes, percentages, "Contains/May contain")
-- `lib/storage/indexeddb.ts`: local-first draft storage
-- `public/sw.js`: offline app shell; caches Tesseract worker and language data after first use
-
-## Known limitations (milestone 1)
-
-- Blur and glare thresholds (`BLUR_THRESHOLD`, `GLARE_FRACTION`) are first guesses and need tuning on real phones.
-- Tap-to-focus and torch only work where the browser exposes those camera controls (mostly Chrome on Android). iOS Safari ignores them.
-- The rate limiter is in memory (one instance). Switch to Upstash before running more than one instance.
-- On-device OCR is English only and less accurate than AI reading. The confirm screen says so.
-- Barcode cross-check (Open Food Facts), the i18n scaffolding and the 30-photo golden set are not built yet.
-
-## Roadmap
-
-1. ✅ Capture, extraction, confirmation
-2. Health profile (multi-profile, IndexedDB) and a deterministic allergen/diet safety layer
-3. Evidence retrieval (PubMed, EFSA/FDA/FSSAI/JECFA, OFF, FDC) and grounded, cited analysis
-4. Results UI, ingredient sheets, evidence badges, explore and chat
-5. History, compare, learning, i18n, polish
+Open Food Facts taxonomies: ODbL, © Open Food Facts contributors. English word list: Webster's Second International (public domain).

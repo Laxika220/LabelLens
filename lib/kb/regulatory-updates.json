@@ -1,0 +1,33 @@
+{
+ "checked": "2026-11-01",
+ "entries": [
+  {
+   "code": "171",
+   "authority": "EFSA",
+   "jurisdiction": "European Union",
+   "date": "2021-05",
+   "title": "Safety assessment of titanium dioxide (E171) as a food additive",
+   "doi": "10.2903/j.efsa.2021.6585",
+   "summary": "EFSA concluded that titanium dioxide (E171) can no longer be considered safe as a food additive, because concerns about genotoxicity could not be ruled out.",
+   "supersedes_doi": "10.2903/j.efsa.2016.4545",
+   "url": "https://doi.org/10.2903/j.efsa.2021.6585",
+   "verified": {
+    "checked": "2026-11-01",
+    "method": "crossref + authority page"
+   }
+  },
+  {
+   "code": "951",
+   "authority": "WHO (IARC and JECFA)",
+   "jurisdiction": "International",
+   "date": "2023-07-14",
+   "title": "Aspartame hazard and risk assessment results released",
+   "url": "https://www.who.int/news/item/14-07-2023-aspartame-hazard-and-risk-assessment-results-released",
+   "summary": "IARC classified aspartame as possibly carcinogenic to humans (Group 2B), based on limited evidence. JECFA kept the acceptable daily intake at 40 mg/kg body weight. A hazard classification describes whether something could cause cancer, not how likely it is at normal intakes.",
+   "verified": {
+    "checked": "2026-11-01",
+    "method": "page text"
+   }
+  }
+ ]
+}

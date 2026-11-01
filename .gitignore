@@ -57,3 +57,5 @@ vision-service/eval/results/raw/
 vision-service/eval/real/images/
 vision-service/eval/synthetic/
 .cache/
+vision-service/eval/real/.off_cache/
+vision-service/eval/real/off_manifest.json

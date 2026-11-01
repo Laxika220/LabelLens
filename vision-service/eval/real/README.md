@@ -43,3 +43,40 @@ Save photos in `images/` (git-ignored, so your photos are never pushed) and add 
 ```
 
 With `ANTHROPIC_API_KEY` set, the AI cross-check is included; the report shows both.
+
+## Open Food Facts records (less typing, but still checked by hand)
+
+`build_from_off.py` fetches Indian products from [Open Food Facts](https://world.openfoodfacts.org) (OFF): real photos that volunteers took of real packs, plus the ingredient text they typed. It saves the photo exactly as uploaded to `images/` and adds lines to `labels.jsonl` in the same schema as above.
+
+```bash
+.venv/bin/python -m eval.real.build_from_off survey               # what's available, no downloads
+.venv/bin/python -m eval.real.build_from_off build --transforms   # download + write labels.jsonl
+```
+
+What it guarantees:
+
+- **Exact variant:** the photo and the text come from the same barcode and the same language. Nothing is copied between variants (Maggi Masala and Maggi Atta have different barcodes and different records).
+- **Nothing invented:** a product with no ingredient text gets no record. Allergen terms are fragments copied from the text. Gaps are listed, never filled.
+- **Indian packs only:** barcodes must start with 890 (GS1 India), and text must be English or Hindi.
+- **Your own lines are safe:** rebuilding replaces only lines tagged `off_unverified`. Hand-made lines, and OFF lines you have verified, are kept.
+- **Transformed copies** (`--transforms`) are separate lines with ids ending `__t_blur`, `__t_glare`, `__t_rotation` or `__t_lowres`, tagged `transformed`, so they're never mistaken for real conditions.
+
+**Why every OFF record is `off_unverified`:** OFF text was typed (or machine-read) *from a photo* by volunteers, not checked against the pack. Common problems, all flagged in each record's `notes`:
+
+- OCR errors such as "lodised" for "Iodised".
+- Nutrition or address text mixed in.
+- Lists cut short.
+- Text edited for a newer pack than the photo.
+
+It also usually leaves out the "Ingredients:" heading, which slightly raises CER (the character error rate) but doesn't affect ingredient scores.
+
+To verify a record:
+
+1. Open the photo next to the text, ideally with the pack in hand.
+2. Correct the `text` and `allergens` to match the printed label.
+3. Fill `conditions` (glare, curved, ...) from the photo.
+4. **Remove `off_unverified`** and add who checked it to `notes`.
+
+`run_real` reports unverified OFF records, hand-checked records and transformed copies in separate rows, and never averages them together.
+
+Licences: OFF data is ODbL 1.0 and the photos are CC BY-SA 3.0, © Open Food Facts contributors. Each record's `notes`, and `off_manifest.json`, keep the product URL, the photo URL, the contributor and the retrieval date. Photos stay in the git-ignored `images/` folder, so they aren't redistributed. If you publish `labels.jsonl`, keep the attribution, and release it under ODbL. The script identifies itself to OFF (set `OFF_CONTACT` to add your contact) and stays under OFF's limits of 10 searches/min and 100 reads/min, caching every response in `.off_cache/`.

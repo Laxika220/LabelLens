@@ -7,7 +7,10 @@ Reports, overall and per condition/language:
 - error flagging: of the words that are wrong, how many were NOT marked
   confirmed (and how many wrong words were silently "confirmed").
 
-Usage:  .venv/bin/python -m eval.run_real [--no-claude]
+Labels tagged `off_unverified` (built by eval/real/build_from_off.py) are
+reported separately from hand-checked ones: their truth hasn't been checked.
+
+Usage:  .venv/bin/python -m eval.run_real [--no-claude] [--no-transformed]
 """
 
 import argparse
@@ -28,11 +31,14 @@ ROOT = Path(__file__).parent / "real"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-claude", action="store_true")
+    ap.add_argument("--no-transformed", action="store_true", help="skip transformed copies made by build_from_off")
     args = ap.parse_args()
     labels_path = ROOT / "labels.jsonl"
     if not labels_path.exists():
         raise SystemExit(f"No {labels_path}. See eval/real/README.md for how to build the real-photo set.")
     labels = [json.loads(line) for line in labels_path.read_text().splitlines() if line.strip()]
+    if args.no_transformed:
+        labels = [lab for lab in labels if "transformed" not in lab.get("conditions", [])]
 
     rows = []
     for lab in labels:
@@ -64,9 +70,17 @@ def main():
 
     if not rows:
         raise SystemExit("no usable labels")
+    # Never average hand-checked truth with Open Food Facts text that no one has
+    # checked, or real photos with transformed copies.
+    def overall(r):
+        c = r["conditions"]
+        if "transformed" in c:
+            return "ALL transformed copies (not real conditions)"
+        return "ALL Open Food Facts (unverified truth)" if "off_unverified" in c else "ALL hand-checked"
+
     groups = defaultdict(list)
     for r in rows:
-        groups["ALL"].append(r)
+        groups[overall(r)].append(r)
         for c in r["conditions"]:
             groups[c].append(r)
 
@@ -79,7 +93,7 @@ def main():
              f"AI cross-check used: {sum(r['claude_used'] for r in rows)}/{len(rows)} labels.\n",
              "| group | labels | CER pipeline | CER RapidOCR alone | ingredient recall | ingredient precision | allergen-term recall | wrong words flagged | silent errors |",
              "|---|---|---|---|---|---|---|---|---|"]
-    for g, rs in sorted(groups.items(), key=lambda kv: (kv[0] != "ALL", kv[0])):
+    for g, rs in sorted(groups.items(), key=lambda kv: (not kv[0].startswith("ALL"), kv[0])):
         wrong = sum(r["wrong_words"] for r in rs)
         flagged = sum(r["wrong_flagged"] for r in rs)
         f = lambda x: "–" if x is None else f"{x:.3f}"  # noqa: E731

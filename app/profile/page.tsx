@@ -1,5 +1,6 @@
 "use client";
 
+import { newId } from "@/lib/id";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ALLERGEN_OPTIONS } from "@/lib/safety/allergen-matcher";
@@ -25,7 +26,7 @@ const GOALS = [
 ];
 
 const empty = (): Profile => ({
-  id: crypto.randomUUID(),
+  id: newId(),
   name: "Me",
   allergens: [],
   intolerances: [],

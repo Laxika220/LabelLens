@@ -74,7 +74,12 @@ cp .env.example .env.local   # set VISION_SERVICE_URL=http://127.0.0.1:8001 and 
 npm run dev
 ```
 
-The live camera needs HTTPS on a phone: `npx next dev --experimental-https`, then open `https://<computer-ip>:3000`.
+### On your phone
+
+Start the vision service (step 1 above), then `npm run phone` (builds and serves on port **3005**, reachable from your Wi-Fi). Phone and computer must be on the same Wi-Fi.
+
+- **Quick:** open `http://<computer-ip>:3005` (macOS: `ipconfig getifaddr en0`; the address changes when the network reconnects). Everything works except the live camera viewer, which phones only allow on HTTPS; "Take photo" opens the normal camera app instead.
+- **Full, with live camera:** `ngrok http http://127.0.0.1:3005` and open the `https://…ngrok-free.dev` address. Write `127.0.0.1` explicitly: `localhost` can resolve to a different app on the same port number over IPv6. Anyone with the link can use the app while ngrok runs; stop it with Ctrl+C.
 
 | Command | What it runs |
 | --- | --- |

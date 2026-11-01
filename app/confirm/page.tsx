@@ -1,5 +1,6 @@
 "use client";
 
+import { newId } from "@/lib/id";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PhotoHighlight } from "@/components/PhotoHighlight";
@@ -27,7 +28,7 @@ const SOURCE_LABEL: Record<ReadSource, string> = {
 
 function toRows(items: Item[]): Row[] {
   return items.map((item) => ({
-    id: crypto.randomUUID(),
+    id: newId(),
     kind: item.kind,
     item,
     words: item.words.map((w) => w.text),
@@ -325,7 +326,7 @@ export default function ConfirmPage() {
             const t = adding.trim();
             if (!t) return;
             const item: Item = { kind: "ingredient", raw: t, status: "confirmed", words: [], photo: null, boxes: [], sources: ["you"], engines_agree: null, needs_review: false, note: "" };
-            setRows((prev) => [...prev, { id: crypto.randomUUID(), kind: "ingredient", item, words: [], text: t, status: "edited", acknowledged: false }]);
+            setRows((prev) => [...prev, { id: newId(), kind: "ingredient", item, words: [], text: t, status: "edited", acknowledged: false }]);
             setAdding("");
             setSaved(false);
           }}

@@ -1,5 +1,6 @@
 "use client";
 
+import { newId } from "@/lib/id";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -53,7 +54,7 @@ export default function ScanPage() {
   useEffect(() => () => shotsRef.current.forEach((s) => URL.revokeObjectURL(s.url)), []);
 
   const makeShot = useCallback((blob: Blob, localHint: string | null): Shot => {
-    const shot: Shot = { id: crypto.randomUUID(), blob, url: URL.createObjectURL(blob), localHint, assess: null, assessState: "pending" };
+    const shot: Shot = { id: newId(), blob, url: URL.createObjectURL(blob), localHint, assess: null, assessState: "pending" };
     assess(blob).then((a) =>
       setShots((prev) => prev.map((s) => (s.id === shot.id ? { ...s, assess: a, assessState: a ? "done" : "unavailable" } : s))),
     );

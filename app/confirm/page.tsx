@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PhotoHighlight } from "@/components/PhotoHighlight";
+import { SafetyPanel } from "@/components/SafetyPanel";
 import { StatusBadge, StatusLegend, type ReviewStatus } from "@/components/StatusBadge";
 import type { Item, ReadSource } from "@/lib/read/types";
 import { loadDraft, saveDraft, type ReviewedItem, type ScanDraft } from "@/lib/storage/indexeddb";
@@ -364,10 +365,18 @@ export default function ConfirmPage() {
       </div>
 
       {saved && (
-        <section className="card text-sm" aria-live="polite">
-          <p className="font-semibold">Ingredient list confirmed.</p>
-          <p className="mt-1 text-muted">Evidence-based analysis comes in a later milestone.</p>
-        </section>
+        <>
+          <section className="card text-sm" aria-live="polite">
+            <p className="font-semibold">Ingredient list confirmed.</p>
+            <p className="mt-1 text-muted">Research-backed ingredient information comes in a later milestone.</p>
+          </section>
+          <SafetyPanel
+            lines={rows
+              .filter((r) => r.kind === "ingredient" || r.kind === "statement")
+              .map((r) => ({ kind: r.kind as "ingredient" | "statement", text: r.text }))}
+            readIncomplete={result.allergen_section_uncertain || draft.source !== "pipeline" && draft.source !== "manual"}
+          />
+        </>
       )}
     </div>
   );

@@ -14,6 +14,9 @@ export default function Home() {
       <Link href="/scan" className="btn-primary text-lg">
         Scan a label
       </Link>
+      <Link href="/profile" className="btn-secondary">
+        Allergies, diet and health profile
+      </Link>
 
       <section className="card text-sm leading-relaxed">
         <h2 className="mb-1 font-bold">What to expect</h2>

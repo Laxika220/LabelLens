@@ -141,6 +141,7 @@ def main():
     manifest = {r["image"]: r for r in load(base / "manifest.jsonl")}
     recs = load(ROOT / "results" / "raw" / f"{args.set}_rapidocr.jsonl")
     tess = {r["image"]: r for r in load(ROOT / "results" / "raw" / f"{args.set}_tesseract.jsonl")}
+    claude = {r["image"]: r for r in load(ROOT / "results" / "raw" / f"{args.set}_claude.jsonl") if r.get("text") is not None}
     if not recs:
         raise SystemExit("no raw results; run eval.run_ocr first")
 
@@ -152,6 +153,7 @@ def main():
     per = defaultdict(lambda: defaultdict(list))  # variant -> category -> scores
     oracle = defaultdict(list)
     tess_scores = defaultdict(list)
+    claude_scores = defaultdict(list)
     seconds = defaultdict(list)
     quality_rows = []
     for rec in recs:
@@ -168,6 +170,10 @@ def main():
         oracle["ALL"].append(best)
         orig = metrics.score(line_text(rec["variants"]["original"]["lines"]), m["text"], m["allergens"])
         quality_rows.append({**rec["quality"], "category": m["category"], "cer": orig["cer"], "ing_recall": orig["ing_recall"]})
+        if rec["image"] in claude:
+            cs = metrics.score(claude[rec["image"]]["text"].replace("⟦?⟧", ""), m["text"], m["allergens"])
+            claude_scores[m["category"]].append(cs)
+            claude_scores["ALL"].append(cs)
         if rec["image"] in tess:
             ts = metrics.score(tess[rec["image"]]["text"], m["text"], m["allergens"])
             tess_scores[m["category"]].append(ts)
@@ -221,6 +227,7 @@ def main():
         "per_variant": table,
         "oracle_best_variant_upper_bound": {c: agg(oracle[c]) for c in categories + ["ALL"]},
         "tesseract_js_original": {c: agg(tess_scores[c]) for c in categories + ["ALL"]} if tess_scores else None,
+        "claude_original": {c: agg(claude_scores[c]) for c in categories + ["ALL"]} if claude_scores else None,
         "seconds_median": {v: median(seconds[v]) for v in seconds},
         "tesseract_seconds_median": median(r["seconds"] for r in tess.values()) if tess else None,
         "fusion": {
@@ -279,6 +286,11 @@ def render(s, categories, variants) -> str:
     L.append(f"- CER {fmt(a['cer'])}, WER {fmt(a['wer'])}")
     L.append(f"- Ingredient recall {fmt(a['ing_recall'], True)}, precision {fmt(a['ing_precision'], True)}, exact full list {fmt(a['exact_list'], True)}")
     L.append(f"- Allergen-term recall {fmt(a['allergen_recall'], True)}")
+    if s.get("claude_original"):
+        c = s["claude_original"]["ALL"]
+        L.append(f"- Claude vision (verbatim prompt) for comparison: CER {fmt(c['cer'])}, ingredient recall {fmt(c['ing_recall'], True)}, allergen-term recall {fmt(c['allergen_recall'], True)} ({c['n']} images)")
+    else:
+        L.append("- Claude vision: **not measured** (no API key was available for this run; `python -m eval.run_claude` adds it)")
     if s["tesseract_js_original"]:
         t = s["tesseract_js_original"]["ALL"]
         L.append(f"- tesseract.js for comparison: CER {fmt(t['cer'])}, ingredient recall {fmt(t['ing_recall'], True)}, allergen-term recall {fmt(t['allergen_recall'], True)}")

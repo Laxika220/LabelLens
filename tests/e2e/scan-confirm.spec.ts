@@ -70,3 +70,22 @@ test("typed list can be edited before confirming", async ({ page }) => {
   await page.getByRole("button", { name: "This matches the label" }).click();
   await expect(page.getByText("Ingredient list confirmed.")).toBeVisible();
 });
+
+test("profile allergy is flagged after confirming the list", async ({ page }) => {
+  await page.goto("/profile");
+  await page.getByLabel("Profile name").fill("Me");
+  await page.getByRole("checkbox", { name: "Soy" }).check();
+  await page.getByRole("checkbox", { name: "Milk" }).check();
+  await page.getByRole("button", { name: "Save and use this profile" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+  await page.goto("/scan");
+  await page.locator("input[type=file][multiple]").setInputFiles(fixture("label-clean.jpg"));
+  await page.getByRole("button", { name: /Read label from 1 photo/ }).click();
+  await expect(page).toHaveURL(/\/confirm$/, { timeout: 120_000 });
+  await page.getByRole("button", { name: "This matches the label" }).click();
+
+  await expect(page.getByRole("heading", { name: "Checks for Me" })).toBeVisible();
+  await expect(page.getByText("Contains: Soy")).toBeVisible();
+  await expect(page.getByText("Contains: Milk")).toHaveCount(0);
+});
